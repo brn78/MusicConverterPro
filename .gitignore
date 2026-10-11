@@ -1,0 +1,17 @@
+*.suo
+*.user
+_ReSharper.*
+bin/
+obj/
+packages/
+.vs/
+*.vs
+
+# Pacchetto portatile e strumenti binari: non vanno nel repository (limite 100 MB per file su GitHub)
+publish_portable/
+publish_single/
+tools/*.exe
+
+# Impostazioni locali dell'utente
+config.json
+

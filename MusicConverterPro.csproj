@@ -1,0 +1,82 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <UseWindowsForms>true</UseWindowsForms>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>MusicConverterPro</AssemblyName>
+    <RootNamespace>MusicConverterPro</RootNamespace>
+    <ApplicationIcon>MusicConverterPro.ico</ApplicationIcon>
+    <Product>Music Converter Pro</Product>
+    <Company>packjc</Company>
+    <Authors>packjc</Authors>
+    <Description>Music Converter Pro - scarica, converte e ottimizza musica per autoradio e USB</Description>
+    <Copyright>© 2026 packjc · GNU GPL v3</Copyright>
+    <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
+    <Version>2.6.0</Version>
+    <!-- SingleExe=true: strumenti e documenti incorporati nell'eseguibile (vedi README) -->
+    <SingleExe Condition="'$(SingleExe)' == ''">false</SingleExe>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <Content Include="MusicConverterPro.ico" />
+  </ItemGroup>
+
+  <!-- Versione a cartella: strumenti e documenti copiati accanto all'exe -->
+  <ItemGroup Condition="'$(SingleExe)' != 'true'">
+    <Content Include="tools\**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </Content>
+    <Content Include="LICENSE;THIRD-PARTY-NOTICES.md;licenses\**">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+      <ExcludeFromSingleFile>true</ExcludeFromSingleFile>
+    </Content>
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+  </ItemGroup>
+
+  <!--
+    Versione a singolo eseguibile: tools (yt-dlp, FFmpeg, Deno) + licenze vengono
+    compressi in tools.zip e incorporati come risorsa, con un manifesto (versione app +
+    data dei file) che l'app confronta al lancio per decidere se scompattare di nuovo.
+  -->
+  <PropertyGroup Condition="'$(SingleExe)' == 'true'">
+    <ToolsBundleDir>$(BaseIntermediateOutputPath)toolsbundle\</ToolsBundleDir>
+    <ToolsStage>$(ToolsBundleDir)stage\</ToolsStage>
+    <ToolsZip>$(ToolsBundleDir)tools.zip</ToolsZip>
+    <ToolsManifest>$(ToolsBundleDir)tools.manifest</ToolsManifest>
+  </PropertyGroup>
+
+  <ItemGroup Condition="'$(SingleExe)' == 'true'">
+    <BundleTool Include="tools\ffmpeg.exe;tools\yt-dlp.exe;tools\deno.exe" />
+    <BundleDoc Include="LICENSE;THIRD-PARTY-NOTICES.md" />
+    <BundleLicense Include="licenses\*" />
+  </ItemGroup>
+
+  <!-- L'archivio viene sempre ricostruito da zero: niente file vecchi da una cartella di appoggio precedente -->
+  <Target Name="PackTools" Condition="'$(SingleExe)' == 'true'">
+    <Delete Files="$(ToolsZip);$(ToolsManifest)" />
+    <RemoveDir Directories="$(ToolsStage)" />
+    <Copy SourceFiles="@(BundleTool)" DestinationFolder="$(ToolsStage)tools" />
+    <Copy SourceFiles="@(BundleDoc)" DestinationFolder="$(ToolsStage)" />
+    <Copy SourceFiles="@(BundleLicense)" DestinationFolder="$(ToolsStage)licenses" />
+    <!-- Il manifesto (versione + data di strumenti e documenti) decide se l'app deve scompattare di nuovo -->
+    <WriteLinesToFile File="$(ToolsManifest)" Overwrite="true"
+                      Lines="app=$(Version);@(BundleTool->'%(Filename)%(Extension)=%(ModifiedTime)');@(BundleDoc->'%(Filename)%(Extension)=%(ModifiedTime)');@(BundleLicense->'%(Filename)%(Extension)=%(ModifiedTime)')" />
+    <ZipDirectory SourceDirectory="$(ToolsStage)" DestinationFile="$(ToolsZip)" Overwrite="true" />
+    <Message Importance="high" Text="Strumenti incorporati in $(ToolsZip)" />
+  </Target>
+
+  <Target Name="EmbedTools" BeforeTargets="PrepareForBuild" DependsOnTargets="PackTools" Condition="'$(SingleExe)' == 'true'">
+    <ItemGroup>
+      <EmbeddedResource Include="$(ToolsZip)" LogicalName="tools.zip" />
+      <EmbeddedResource Include="$(ToolsManifest)" LogicalName="tools.manifest" />
+    </ItemGroup>
+  </Target>
+
+</Project>
