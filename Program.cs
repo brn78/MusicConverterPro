@@ -46,6 +46,10 @@ namespace MusicConverterPro
                 }
 
                 EngineManager.ExternalRoot = folder;
+
+                // Le versioni precedenti vengono eliminate dopo la scompattazione; se allora una era
+                // in uso (o bloccata dall'antivirus), ci si riprova in sottofondo a ogni avvio.
+                System.Threading.Tasks.Task.Run(() => ToolsBundle.CleanupOldVersions(folder));
                 return true;
             }
             catch (Exception ex)

@@ -39,6 +39,9 @@ namespace MusicConverterPro
 
         /// <summary>Nome pulito (senza estensione) che il file assumerà con "Rinomina con nomi puliti".</summary>
         public string CleanName { get; set; } = "";
+
+        /// <summary>Marcatore scritto nei tag dall'app quando il file è stato ottimizzato (null = mai elaborato).</summary>
+        public string? OptimizeMarker { get; set; }
         public bool NeedsRename => !string.IsNullOrEmpty(CleanName) &&
                                    !string.Equals(CleanName, Path.GetFileNameWithoutExtension(FileName), StringComparison.Ordinal);
 
@@ -79,6 +82,55 @@ namespace MusicConverterPro
     {
         public const string OutputSubfolder = "Ottimizzati";
         private const string TempMarker = ".mcp_tmp_";
+
+        /// <summary>
+        /// Nome del tag (frame ID3 TXXX) in cui l'app annota cosa ha già fatto al file: così alla
+        /// successiva analisi il file risulta subito "già ottimizzato" senza riaprirlo con FFmpeg
+        /// né ricodificarlo. Invisibile per autoradio e lettori.
+        /// </summary>
+        public const string MarkerKey = "MusicConverterPro";
+
+        /// <summary>Valore del marcatore: versione dell'app e cosa è stato applicato (normalizzazione, standard autoradio).</summary>
+        public static string BuildMarker(bool normalized, bool standard)
+        {
+            var sb = new StringBuilder("mcp=" + AppInfo.Version);
+            if (normalized) sb.Append(";norm=r128-14");
+            if (standard) sb.Append(";std=44100-stereo-id3v23");
+            return sb.ToString();
+        }
+
+        private static bool MarkerHas(string? marker, string token)
+        {
+            if (string.IsNullOrEmpty(marker)) return false;
+            foreach (var part in marker.Split(';'))
+            {
+                string p = part.Trim();
+                if (p.Equals(token, StringComparison.OrdinalIgnoreCase) ||
+                    p.StartsWith(token + "=", StringComparison.OrdinalIgnoreCase)) return true;
+            }
+            return false;
+        }
+
+        /// <summary>Il marcatore copre tutto ciò che le opzioni correnti chiederebbero di fare.</summary>
+        public static bool MarkerSatisfies(string? marker, OptimizeOptions options) =>
+            !string.IsNullOrEmpty(marker) &&
+            (!options.Normalize || MarkerHas(marker, "norm")) &&
+            (!options.FixStandard || MarkerHas(marker, "std"));
+
+        /// <summary>Descrizione breve del marcatore (deve stare nella colonna "Esito"), es. "R128, 44,1 kHz".</summary>
+        public static string DescribeMarker(string? marker)
+        {
+            var parts = new List<string>();
+            if (MarkerHas(marker, "norm")) parts.Add("R128");
+            if (MarkerHas(marker, "std")) parts.Add("44,1 kHz");
+            return parts.Count == 0 ? "" : string.Join(", ", parts);
+        }
+
+        private static string OptimizedStatus(string? marker)
+        {
+            string d = DescribeMarker(marker);
+            return d.Length == 0 ? "Già ottimizzato" : $"Già ottimizzato ({d})";
+        }
 
         private static readonly HashSet<string> AudioExtensions = new HashSet<string>(StringComparer.OrdinalIgnoreCase)
         {
@@ -147,16 +199,18 @@ namespace MusicConverterPro
                     string fileName = fi.Name;
                     string dir = fi.DirectoryName ?? root;
                     string relative = dir.Length > root.Length ? dir.Substring(root.Length).TrimStart(Path.DirectorySeparatorChar) : "";
+                    string ext = fi.Extension.ToLowerInvariant();
 
                     results.Add(new AudioItemInfo
                     {
                         FilePath = f,
                         FileName = fileName,
                         Folder = string.IsNullOrEmpty(relative) ? "\\" : relative,
-                        Extension = fi.Extension.ToLowerInvariant(),
+                        Extension = ext,
                         FileSize = fi.Length,
                         NormalizedKey = NormalizeAudioTitle(fileName),
-                        CleanName = cleanNames ? TitleCleaner.Clean(Path.GetFileNameWithoutExtension(fileName)) : ""
+                        CleanName = cleanNames ? TitleCleaner.Clean(Path.GetFileNameWithoutExtension(fileName)) : "",
+                        OptimizeMarker = ext == ".mp3" ? Id3Tags.ReadUserText(f, MarkerKey) : null
                     });
                 }
                 catch { }
@@ -199,7 +253,9 @@ namespace MusicConverterPro
                 }
             }
 
-            // Livello 2: stessa dimensione esatta tra i file non ancora marcati (copie binarie identiche)
+            // Livello 2: stessa dimensione esatta tra i file non ancora marcati. Due brani diversi possono
+            // avere la stessa dimensione (CBR 320 kbps, stessa durata): si confronta anche la coda del file,
+            // così vengono marcate solo le copie binarie identiche.
             var bySize = results.Where(r => !r.IsDuplicate && r.FileSize > 100 * 1024)
                                 .GroupBy(r => r.FileSize)
                                 .Where(g => g.Count() > 1);
@@ -207,12 +263,18 @@ namespace MusicConverterPro
             foreach (var group in bySize)
             {
                 var master = group.First();
+                byte[]? masterTail = ReadTail(master.FilePath);
+                if (masterTail == null) continue;
+
                 foreach (var item in group.Skip(1))
                 {
+                    byte[]? tail = ReadTail(item.FilePath);
+                    if (tail == null || !tail.AsSpan().SequenceEqual(masterTail)) continue;
+
                     item.IsDuplicate = true;
                     item.DuplicateOf = master.FileName;
                     item.Kind = AudioItemKind.Duplicate;
-                    item.Status = $"Stessa dimensione di: {master.FileName}";
+                    item.Status = $"Copia identica di: {master.FileName}";
                 }
             }
 
@@ -222,6 +284,11 @@ namespace MusicConverterPro
                 {
                     item.Kind = AudioItemKind.ToConvert;
                     item.Status = $"Da convertire in MP3 ({item.FormatLabel})";
+                }
+                else if (item.OptimizeMarker != null)
+                {
+                    item.Kind = AudioItemKind.Compliant;
+                    item.Status = OptimizedStatus(item.OptimizeMarker);
                 }
                 else
                 {
@@ -286,6 +353,30 @@ namespace MusicConverterPro
                 if (subName.StartsWith("System Volume Information", StringComparison.OrdinalIgnoreCase)) continue;
                 if (subName.StartsWith("$RECYCLE", StringComparison.OrdinalIgnoreCase)) continue;
                 CollectAudioFiles(sub, files);
+            }
+        }
+
+        /// <summary>Ultimi 64 KB del file (dove stanno gli ultimi frame audio, non i tag): null se illeggibile.</summary>
+        private static byte[]? ReadTail(string path)
+        {
+            try
+            {
+                using var fs = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.Read, 4096);
+                int len = (int)Math.Min(64 * 1024, fs.Length);
+                fs.Seek(-len, SeekOrigin.End);
+                var buf = new byte[len];
+                int total = 0;
+                while (total < len)
+                {
+                    int n = fs.Read(buf, total, len - total);
+                    if (n <= 0) break;
+                    total += n;
+                }
+                return total == len ? buf : null;
+            }
+            catch
+            {
+                return null;
             }
         }
 
@@ -381,16 +472,45 @@ namespace MusicConverterPro
                 item.Kind = AudioItemKind.Busy;
                 Report(isMp3 ? "Verifica..." : $"Conversione {item.FormatLabel} → MP3...");
 
-                if (isMp3 && options.SkipCompliant && !options.Normalize)
+                if (options.SkipCompliant)
                 {
-                    bool compliant = await IsCompliantAsync(item.FilePath, options.FixStandard, ct);
-                    if (compliant)
+                    // Il file porta il marcatore dell'app con tutto ciò che le opzioni richiedono:
+                    // nessuna ricodifica (e nessuna perdita di qualità a ogni passaggio).
+                    if (isMp3)
+                    {
+                        string? marker = item.OptimizeMarker ?? Id3Tags.ReadUserText(item.FilePath, MarkerKey);
+                        if (MarkerSatisfies(marker, options))
+                        {
+                            item.OptimizeMarker = marker;
+                            item.Kind = AudioItemKind.Compliant;
+                            string note = ApplyCleanName(item, item.FilePath, options, result);
+                            Report(OptimizedStatus(marker) + note);
+                            result.Skipped++;
+                            continue;
+                        }
+                    }
+
+                    // Senza "Sostituisci gli originali" la copia ottimizzata sta in "Ottimizzati": se c'è già, basta
+                    if (!options.ReplaceOriginals && FindExistingOutput(item, options) != null)
                     {
                         item.Kind = AudioItemKind.Compliant;
-                        string note = ApplyCleanName(item, item.FilePath, options, result);
-                        Report("Già conforme · nessuna modifica" + note);
+                        Report($"Già ottimizzato in {OutputSubfolder}\\");
                         result.Skipped++;
                         continue;
+                    }
+
+                    // MP3 mai elaborati dall'app: senza normalizzazione basta che siano già a 44,1 kHz stereo ID3v2.3
+                    if (isMp3 && !options.Normalize)
+                    {
+                        bool compliant = await IsCompliantAsync(item.FilePath, options.FixStandard, ct);
+                        if (compliant)
+                        {
+                            item.Kind = AudioItemKind.Compliant;
+                            string note = ApplyCleanName(item, item.FilePath, options, result);
+                            Report("Già conforme · nessuna modifica" + note);
+                            result.Skipped++;
+                            continue;
+                        }
                     }
                 }
 
@@ -402,6 +522,7 @@ namespace MusicConverterPro
                 {
                     result.Optimized++;
                     item.Kind = AudioItemKind.Done;
+                    item.OptimizeMarker = BuildMarker(options.Normalize, options.FixStandard);
                     string where = options.ReplaceOriginals ? "" : $" → {OutputSubfolder}\\";
                     string note = ApplyCleanName(item, output, options, result);
                     Report((item.IsDuplicate ? "Ottimizzato (doppione mantenuto)" : "Ottimizzato per autoradio") + where + note);
@@ -431,19 +552,21 @@ namespace MusicConverterPro
                 string ext = Path.GetExtension(currentPath);
                 string baseName = Path.GetFileNameWithoutExtension(currentPath);
 
-                // Con ReplaceOriginals spento il file ottimizzato sta in "Ottimizzati": l'elemento resta l'originale
+                // L'elemento segue il file risultante (l'originale rinominato, oppure l'MP3 che lo ha sostituito).
+                // Con "Sostituisci gli originali" spento la copia sta in "Ottimizzati" e l'elemento resta l'originale.
                 bool isOriginal = string.Equals(currentPath, item.FilePath, StringComparison.OrdinalIgnoreCase);
+                bool followOutput = isOriginal || options.ReplaceOriginals;
 
                 if (!options.CleanNames)
                 {
-                    if (isOriginal) return "";
+                    if (followOutput) UpdateItemPath(item, currentPath);
                     return "";
                 }
 
                 string cleanBase = TitleCleaner.Clean(baseName);
                 if (string.Equals(cleanBase, baseName, StringComparison.Ordinal))
                 {
-                    if (isOriginal) UpdateItemPath(item, currentPath);
+                    if (followOutput) UpdateItemPath(item, currentPath);
                     return "";
                 }
 
@@ -468,7 +591,7 @@ namespace MusicConverterPro
                 }
 
                 result.Renamed++;
-                if (isOriginal || options.ReplaceOriginals) UpdateItemPath(item, target);
+                if (followOutput) UpdateItemPath(item, target);
                 return $" · rinominato: {Path.GetFileName(target)}";
             }
             catch
@@ -482,6 +605,31 @@ namespace MusicConverterPro
             item.FilePath = path;
             item.FileName = Path.GetFileName(path);
             item.Extension = Path.GetExtension(path).ToLowerInvariant();
+        }
+
+        /// <summary>
+        /// Copia già ottimizzata nella sottocartella "Ottimizzati" (nome originale o nome pulito)
+        /// che porta un marcatore sufficiente per le opzioni correnti; altrimenti null.
+        /// </summary>
+        private static string? FindExistingOutput(AudioItemInfo item, OptimizeOptions options)
+        {
+            try
+            {
+                string outDir = Path.Combine(Path.GetDirectoryName(item.FilePath)!, OutputSubfolder);
+                if (!Directory.Exists(outDir)) return null;
+
+                string baseName = Path.GetFileNameWithoutExtension(item.FilePath);
+                var candidates = new List<string> { baseName };
+                if (options.CleanNames) candidates.Add(TitleCleaner.Clean(baseName));
+
+                foreach (var name in candidates.Distinct(StringComparer.Ordinal))
+                {
+                    string p = Path.Combine(outDir, name + ".mp3");
+                    if (File.Exists(p) && MarkerSatisfies(Id3Tags.ReadUserText(p, MarkerKey), options)) return p;
+                }
+            }
+            catch { }
+            return null;
         }
 
         /// <summary>
@@ -520,7 +668,7 @@ namespace MusicConverterPro
 
                 if (checkTags)
                 {
-                    int? id3Major = ReadId3v2Major(filePath);
+                    int? id3Major = Id3Tags.ReadMajorVersion(filePath);
                     if (id3Major.HasValue && id3Major.Value != 3) return false;
                 }
 
@@ -534,23 +682,6 @@ namespace MusicConverterPro
             {
                 return false;
             }
-        }
-
-        private static int? ReadId3v2Major(string filePath)
-        {
-            try
-            {
-                using var fs = new FileStream(filePath, FileMode.Open, FileAccess.Read, FileShare.Read);
-                var header = new byte[10];
-                int read = fs.Read(header, 0, header.Length);
-                if (read < 10) return null;
-                if (header[0] == (byte)'I' && header[1] == (byte)'D' && header[2] == (byte)'3')
-                {
-                    return header[3];
-                }
-            }
-            catch { }
-            return null;
         }
 
         /// <summary>Ricodifica un file in MP3 320 kbps. Restituisce il percorso finale oppure null in caso di errore.</summary>
@@ -581,6 +712,9 @@ namespace MusicConverterPro
             {
                 args.Append("-id3v2_version 3 -write_id3v1 1 ");
             }
+
+            // Marcatore nei tag: alla prossima analisi il file risulta subito "già ottimizzato"
+            args.Append($"-metadata \"{MarkerKey}={BuildMarker(options.Normalize, options.FixStandard)}\" ");
 
             if (options.CleanNames)
             {

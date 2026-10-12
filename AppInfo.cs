@@ -7,7 +7,7 @@ namespace MusicConverterPro
     public static class AppInfo
     {
         public const string Name = "Music Converter Pro";
-        public const string Version = "2.6.0";
+        public const string Version = "2.6.1";
         public const string Author = "packjc";
         public const string Year = "2026";
         public const string LicenseName = "GNU GPL v3 (o successiva)";

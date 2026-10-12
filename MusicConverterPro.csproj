@@ -15,7 +15,7 @@
     <Description>Music Converter Pro - scarica, converte e ottimizza musica per autoradio e USB</Description>
     <Copyright>© 2026 packjc · GNU GPL v3</Copyright>
     <PackageLicenseExpression>GPL-3.0-or-later</PackageLicenseExpression>
-    <Version>2.6.0</Version>
+    <Version>2.6.1</Version>
     <!-- SingleExe=true: strumenti e documenti incorporati nell'eseguibile (vedi README) -->
     <SingleExe Condition="'$(SingleExe)' == ''">false</SingleExe>
   </PropertyGroup>

@@ -42,17 +42,58 @@ namespace MusicConverterPro
 
         private static string? _configPath;
 
-        /// <summary>config.json accanto all'eseguibile (portatile); se la cartella non è scrivibile, in %LOCALAPPDATA%.</summary>
-        private static string ConfigPath => _configPath ??= ResolveConfigPath();
+        /// <summary>
+        /// Percorso di config.json: in %LOCALAPPDATA%\MusicConverterPro, così accanto all'eseguibile
+        /// (desktop, Download...) non compare nulla. Uso portatile: se accanto all'exe c'è la cartella
+        /// "tools" (la stessa che sostituisce i componenti incorporati) il file resta accanto all'exe.
+        /// </summary>
+        public static string ConfigPath => _configPath ??= ResolveConfigPath();
 
         private static string ResolveConfigPath()
         {
-            string local = Path.Combine(AppInfo.ExeDirectory, "config.json");
-            if (File.Exists(local) || IsWritable(AppInfo.ExeDirectory)) return local;
+            string exeDir = AppInfo.ExeDirectory;
+            string local = Path.Combine(exeDir, "config.json");
+            if (Directory.Exists(Path.Combine(exeDir, "tools")) && IsWritable(exeDir)) return local;
 
             string dir = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "MusicConverterPro");
             try { Directory.CreateDirectory(dir); } catch { }
-            return Path.Combine(dir, "config.json");
+            string dest = Path.Combine(dir, "config.json");
+            MigrateLocalConfig(local, dest);
+            return dest;
+        }
+
+        /// <summary>
+        /// Le versioni precedenti salvavano config.json accanto all'exe: al primo avvio il file viene
+        /// spostato nella nuova sede. Se esiste già un file nella nuova sede vale quello accanto all'exe
+        /// (è l'ultimo usato), ma le impostazioni avanzate scritte a mano non vengono perse.
+        /// </summary>
+        private static void MigrateLocalConfig(string local, string dest)
+        {
+            try
+            {
+                if (!File.Exists(local)) return;
+                if (!File.Exists(dest))
+                {
+                    File.Move(local, dest);
+                    return;
+                }
+
+                var fromLocal = JsonConvert.DeserializeObject<AppSettings>(File.ReadAllText(local));
+                if (fromLocal == null) return;
+
+                var fromDest = JsonConvert.DeserializeObject<AppSettings>(File.ReadAllText(dest));
+                if (fromDest != null)
+                {
+                    if (fromLocal.AutoPasteDomains == null || fromLocal.AutoPasteDomains.Count == 0)
+                        fromLocal.AutoPasteDomains = fromDest.AutoPasteDomains;
+                    if (string.IsNullOrWhiteSpace(fromLocal.YtDlpExtraArgs))
+                        fromLocal.YtDlpExtraArgs = fromDest.YtDlpExtraArgs;
+                }
+
+                File.WriteAllText(dest, JsonConvert.SerializeObject(fromLocal, Formatting.Indented));
+                File.Delete(local);
+            }
+            catch { }
         }
 
         private static bool IsWritable(string dir)

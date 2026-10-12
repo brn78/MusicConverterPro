@@ -110,6 +110,13 @@ namespace MusicConverterPro
             // applicati sia all'estrazione sia al passaggio metadati di yt-dlp
             string extractArgs = settings.CarAudioMode && format == "mp3" ? "-ar 44100 -ac 2 -id3v2_version 3 -write_id3v1 1" : "";
             string metaPpArgs = settings.CarAudioMode && format == "mp3" ? "-id3v2_version 3 -write_id3v1 1" : "";
+            if (format == "mp3")
+            {
+                // Marcatore dell'app nei tag: l'ottimizzatore USB riconosce subito cosa è già a norma
+                // (il valore non contiene spazi, quindi non servono virgolette)
+                string marker = $"-metadata {AudioOptimizer.MarkerKey}={AudioOptimizer.BuildMarker(normalized: false, standard: settings.CarAudioMode)}";
+                metadataArgs = (metadataArgs + " " + marker).Trim();
+            }
             if (metadataArgs.Length > 0)
             {
                 extractArgs = (extractArgs + " " + metadataArgs).Trim();

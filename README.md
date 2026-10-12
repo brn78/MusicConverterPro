@@ -13,6 +13,14 @@ Pensata per uso personale e senza scopo di lucro, con contenuti di cui si hanno 
 
 ## Novità della versione 2.6
 
+### 2.6.1
+- **Niente più `config.json` accanto all'eseguibile**: le impostazioni stanno in `%LOCALAPPDATA%\MusicConverterPro\config.json`. Un file lasciato accanto all'exe dalla versione 2.6.0 viene spostato lì al primo avvio. Uso portatile: se accanto all'exe esiste la cartella `tools`, il file resta accanto all'exe.
+- **Auto-Paste**: suono e notifica compaiono nel momento in cui il link viene preso dagli appunti, non più a lettura finita; la barra di stato mostra quale link si sta leggendo.
+- **File già ottimizzati riconosciuti al volo**: l'ottimizzatore scrive nei tag del file un marcatore (`MusicConverterPro`, frame ID3 TXXX, invisibile per autoradio e lettori) con ciò che ha applicato; alla successiva analisi i file risultano subito "Già ottimizzato" e vengono saltati senza riaprirli con FFmpeg né ricodificarli, anche con la normalizzazione attiva. Anche i file scaricati ricevono il marcatore (standard autoradio, senza normalizzazione). Nuovo pulsante **Aggiorna** per rileggere la cartella dopo un'ottimizzazione.
+- Pulsanti alti quanto le caselle di testo in tutte le schede.
+- Corretto "File non più presente" dopo la conversione di un file non MP3 con "Sostituisci gli originali".
+- Doppioni per dimensione: due file con la stessa dimensione esatta sono segnalati come copia solo se anche il contenuto coincide (brani diversi in MP3 320 kbps con la stessa durata non vengono più scambiati per doppioni).
+
 ### Interfaccia rinnovata
 - Barra laterale con le due sezioni (**Scaricatore**, **Ottimizza USB**), stato del motore (yt-dlp, FFmpeg, Deno) e tema.
 - Schede con angoli arrotondati, un solo colore d'accento, interruttori al posto delle caselle di spunta.
@@ -34,7 +42,7 @@ Pensata per uso personale e senza scopo di lucro, con contenuti di cui si hanno 
 - Le pendrive collegate compaiono in un elenco a discesa; l'analisi parte da sola quando ne scegli una.
 - L'analisi gira in background: la finestra non si blocca più su chiavette piene.
 - Le opzioni **44,1 kHz · stereo · tag ID3v2.3** e **Converti in MP3** ora funzionano davvero (prima erano ignorate).
-- Nuova opzione **Salta i file già conformi**: gli MP3 già a 44,1 kHz stereo con tag ID3v2.3 non vengono ricodificati (nessuna perdita di qualità a ogni passaggio).
+- Nuova opzione **Salta i file già conformi**: i file che portano il marcatore dell'app (vedi 2.6.1) e gli MP3 già a 44,1 kHz stereo con tag ID3v2.3 non vengono ricodificati (nessuna perdita di qualità a ogni passaggio).
 - **Rinomina con nomi puliti**: i file sulla pendrive vengono rinominati con la stessa pulizia del downloader ("Andi Shkoza - Alma  Official Lyrics Video  256k.mp3" diventa "Andi Shkoza - Alma.mp3"), evitando collisioni; i file ricodificati ricevono anche i tag titolo/artista. Il percorso si può anche digitare a mano (Invio per analizzare).
 - I file temporanei di una conversione interrotta vengono eliminati all'analisi successiva.
 - Con **Sostituisci gli originali** disattivato i file ottimizzati vanno nella sottocartella `Ottimizzati` con il nome originale (prima restavano file con nomi casuali).
@@ -55,7 +63,7 @@ Doppio clic su **`publish_single\MusicConverterPro.exe`**: un unico file con tut
 
 Se accanto all'exe esiste una cartella `tools` (con `yt-dlp.exe`, `ffmpeg.exe`, `deno.exe`), viene usata quella al posto dei componenti incorporati: utile per aggiornare yt-dlp senza ricompilare.
 
-Le impostazioni sono salvate in `config.json` accanto all'eseguibile (o in `%LOCALAPPDATA%\MusicConverterPro` se la cartella non è scrivibile).
+Le impostazioni sono salvate in `%LOCALAPPDATA%\MusicConverterPro\config.json`, così accanto all'eseguibile non compare nulla. Per un uso portatile (per esempio su una chiavetta) crea la cartella `tools` accanto all'exe: in quel caso `config.json` resta accanto all'eseguibile.
 
 ### Impostazioni avanzate (solo in `config.json`)
 

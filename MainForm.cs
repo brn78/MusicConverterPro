@@ -435,6 +435,7 @@ namespace MusicConverterPro
             AudioItemKind.Deleted => (_theme.WarningSoft, _theme.Warning),
             AudioItemKind.Master => (_theme.SuccessSoft, _theme.Success),
             AudioItemKind.Done => (_theme.SuccessSoft, _theme.Success),
+            AudioItemKind.Compliant => (_theme.SuccessSoft, _theme.Success),
             AudioItemKind.ToConvert => (_theme.InfoSoft, _theme.Info),
             AudioItemKind.Busy => (_theme.AccentSoft, _theme.AccentText),
             AudioItemKind.Error => (_theme.DangerSoft, _theme.Danger),
@@ -682,7 +683,12 @@ namespace MusicConverterPro
         /// un video dentro una playlist entra da solo.</summary>
         private async Task AddFromClipboardAsync(string url)
         {
-            var probe = await ProbeWithStatusAsync(url);
+            // Avviso subito: il link è stato preso dagli appunti e la lettura parte adesso.
+            // yt-dlp può impiegare diversi secondi: senza questo sembrava che non fosse successo nulla.
+            System.Media.SystemSounds.Asterisk.Play();
+            notifyIcon.ShowBalloonTip(3000, AppInfo.Name, $"Link ricevuto dagli appunti, lettura in corso...\n{ShortUrl(url, 80)}", ToolTipIcon.Info);
+
+            var probe = await ProbeWithStatusAsync(url, "Link ricevuto dagli appunti, lettura in corso");
             if (IsDisposed) return;
 
             int added;
@@ -712,8 +718,11 @@ namespace MusicConverterPro
 
             if (added > 0)
             {
-                System.Media.SystemSounds.Asterisk.Play();
                 notifyIcon.ShowBalloonTip(3500, AppInfo.Name, $"Aggiunto alla coda:\n{Shorten(what, 80)}", ToolTipIcon.Info);
+            }
+            else if (probe == null)
+            {
+                labelStatusText.Text = $"Impossibile leggere il link: {ShortUrl(url, 80)}";
             }
         }
 
@@ -1017,12 +1026,12 @@ namespace MusicConverterPro
             return added;
         }
 
-        private async Task<MediaProbe?> ProbeWithStatusAsync(string url)
+        private async Task<MediaProbe?> ProbeWithStatusAsync(string url, string statusPrefix = "Lettura del link in corso")
         {
             _isProbing = true;
             buttonAddQueue.Enabled = false;
             StylePrimary(buttonDownloadDirect, false);
-            labelStatusText.Text = "Lettura del link in corso...";
+            labelStatusText.Text = $"{statusPrefix}: {ShortUrl(url, 90)}";
             try
             {
                 return await EngineManager.ProbeAsync(url, _probeCts.Token);
@@ -1050,7 +1059,7 @@ namespace MusicConverterPro
         {
             try
             {
-                labelStatusText.Text = "Lettura del link in corso...";
+                labelStatusText.Text = $"Il link fa parte di una playlist, controllo il singolo brano: {ShortUrl(url, 80)}";
                 var single = await EngineManager.ProbeAsync(url, _probeCts.Token, noPlaylist: true);
                 if (single == null || single.IsPlaylist) return null;
                 if (string.IsNullOrEmpty(single.Id) || single.Id == playlist.Id) return null;
@@ -1568,11 +1577,13 @@ namespace MusicConverterPro
                 int duplicates = items.Count(i => i.IsDuplicate);
                 int toConvert = items.Count(i => i.Kind == AudioItemKind.ToConvert);
                 int toRename = items.Count(i => !i.IsDuplicate && i.NeedsRename);
+                int alreadyDone = items.Count(i => i.Kind == AudioItemKind.Compliant);
                 long bytes = items.Sum(i => i.FileSize);
 
                 string summary = total == 0 ? "nessun file audio trovato" : $"{total} file  ·  {FormatSize(bytes)}";
                 if (duplicates > 0) summary += $"  ·  {duplicates} doppioni";
                 if (toConvert > 0) summary += $"  ·  {toConvert} da convertire";
+                if (alreadyDone > 0) summary += $"  ·  {alreadyDone} già ottimizzati";
                 if (toRename > 0) summary += $"  ·  {toRename} da rinominare";
                 labelOptSummary.Text = summary;
 
@@ -1628,6 +1639,21 @@ namespace MusicConverterPro
             listViewOpt.EndUpdate();
             // Differito: la barra di scorrimento verticale compare solo dopo il layout
             BeginInvoke(new Action(AutoResizeOptColumns));
+        }
+
+        /// <summary>Rilegge la cartella: dopo un'ottimizzazione mostra i nomi nuovi e i file già ottimizzati.</summary>
+        private async void buttonOptRefresh_Click(object sender, EventArgs e)
+        {
+            if (_isOptimizing || _isScanning) return;
+
+            string folder = textBoxOptFolder.Text.Trim();
+            if (string.IsNullOrWhiteSpace(folder) || !Directory.Exists(folder))
+            {
+                labelOptStatus.Text = "Seleziona una pendrive o una cartella da rileggere.";
+                return;
+            }
+
+            await RunScanAndAnalyzeAsync(folder);
         }
 
         private void buttonOptClear_Click(object sender, EventArgs e)
@@ -1820,6 +1846,16 @@ namespace MusicConverterPro
         {
             if (string.IsNullOrEmpty(text) || text.Length <= max) return text ?? "";
             return text.Substring(0, max - 1) + "…";
+        }
+
+        /// <summary>Link leggibile per stato e notifiche: senza schema e "www.", accorciato.</summary>
+        private static string ShortUrl(string url, int max)
+        {
+            string s = (url ?? "").Trim();
+            if (s.StartsWith("https://", StringComparison.OrdinalIgnoreCase)) s = s.Substring(8);
+            else if (s.StartsWith("http://", StringComparison.OrdinalIgnoreCase)) s = s.Substring(7);
+            if (s.StartsWith("www.", StringComparison.OrdinalIgnoreCase)) s = s.Substring(4);
+            return Shorten(s, max);
         }
 
         private void MainForm_FormClosing(object sender, FormClosingEventArgs e)

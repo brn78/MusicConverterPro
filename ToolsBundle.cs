@@ -112,7 +112,8 @@ namespace MusicConverterPro
             CleanupOldVersions(folder);
         }
 
-        private static void CleanupOldVersions(string keep)
+        /// <summary>Elimina le cartelle runtime delle altre versioni (tentativo: se una è in uso resta per la prossima volta).</summary>
+        public static void CleanupOldVersions(string keep)
         {
             try
             {
